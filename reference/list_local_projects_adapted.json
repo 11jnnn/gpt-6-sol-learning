@@ -1,0 +1,11 @@
+{
+  "name": "list_local_projects",
+  "description": "列出本地项目目录。读取 PROJECTS_DIR 环境变量指定的目录，返回该目录下的直接子目录（项目）名称与完整路径。只列出一级子目录，不递归扫描、不读取文件内容、不执行命令。目录不存在时返回明确说明，读取失败时返回真实错误信息。",
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "_adapted_from": "GPT-6-Sol_Tools.json 中 frontend_tools 第 40 项 list_projects",
+  "_note": "原工具面向 Codex 桌面端的项目目录（含本地/远程/ChatGPT 项目及 Git 信息）；本学习项目将其适配为本地文件夹列表。"
+}

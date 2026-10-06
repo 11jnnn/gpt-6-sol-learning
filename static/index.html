@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>个人 AI 助手</title>
+  <style>
+    :root {
+      --bg: #f5f6f8; --panel: #fff; --border: #e2e5ea; --accent: #2563eb;
+      --text: #1f2937; --muted: #6b7280; --tool-bg: #f0f4ff;
+      --danger: #dc2626; --ok: #16a34a; --warn: #d97706;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+    header { padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 12px; }
+    header .title { font-size: 16px; font-weight: 600; flex: 1; }
+    .btn { padding: 7px 14px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-ghost { background: #eef2ff; color: var(--accent); }
+    .btn-ok { background: var(--ok); color: #fff; }
+    .btn-danger { background: #fff; color: var(--danger); border: 1px solid var(--danger); }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    main { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+    .bubble { max-width: 76%; padding: 10px 14px; border-radius: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+    .user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+    .assistant { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+    .system { align-self: center; background: #f3f4f6; color: var(--muted); font-size: 12px; border-radius: 8px; padding: 5px 10px; max-width: 80%; }
+    .error { align-self: flex-start; background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; }
+    .tool { align-self: flex-start; background: var(--tool-bg); border: 1px solid #dbe4ff; border-radius: 8px; padding: 8px 12px; font-size: 13px; color: #3730a3; max-width: 76%; word-break: break-word; }
+    .tool summary { cursor: pointer; font-weight: 600; }
+    .tool pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: 12px; color: #1e293b; }
+    .status { align-self: flex-start; font-size: 12px; color: var(--muted); background: #f9fafb; border: 1px dashed var(--border); border-radius: 8px; padding: 5px 10px; }
+    .card { align-self: flex-start; background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 12px; max-width: 92%; width: 92%; }
+    .card h4 { margin: 0 0 6px; font-size: 14px; }
+    .card .meta { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    .card pre { background: #f8fafc; border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow-y: auto; }
+    .card .actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+    .card .result { margin-top: 8px; font-size: 13px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    footer { display: flex; gap: 10px; padding: 14px 20px; background: var(--panel); border-top: 1px solid var(--border); }
+    textarea { flex: 1; resize: none; height: 44px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; font-family: inherit; font-size: 14px; }
+    textarea:focus { outline: none; border-color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="title">个人 AI 助手</span>
+    <button class="btn btn-ghost" id="reset">新任务</button>
+  </header>
+  <main id="chat"></main>
+  <footer>
+    <textarea id="input" placeholder="输入消息，例如：帮我修复 tools.py 的语法错误"></textarea>
+    <button class="btn btn-primary" id="send">发送</button>
+  </footer>
+
+  <script>
+    const chatEl = document.getElementById('chat');
+    const inputEl = document.getElementById('input');
+    const sendBtn = document.getElementById('send');
+    const resetBtn = document.getElementById('reset');
+
+    let history = [];
+    let taskId = 'default';   // 由后端 /task/reset 分配，用于任务隔离
+    let sending = false;      // 防止重复发送
+    let composing = false;    // 中文输入法组合中
+
+    function addBubble(text, kind) {
+      const div = document.createElement('div');
+      div.className = 'bubble ' + kind;
+      div.textContent = text; // 所有内容用 textContent，避免注入
+      chatEl.appendChild(div);
+      chatEl.scrollTop = chatEl.scrollHeight;
+      return div;
+    }
+
+    function addTool(record) {
+      const details = document.createElement('details');
+      details.className = 'tool';
+      const summary = document.createElement('summary');
+      summary.textContent = '工具调用：' + record.name;
+      details.appendChild(summary);
+      const pre = document.createElement('pre');
+      const args = record.args && Object.keys(record.args).length ? '参数：' + JSON.stringify(record.args) : '参数：无';
+      pre.textContent = args + '\n结果：\n' + (record.result || '(无)');
+      details.appendChild(pre);
+      chatEl.appendChild(details);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function renderTask(task) {
+      if (!task || !task.project) return;
+      const div = document.createElement('div');
+      div.className = 'status';
+      div.textContent = '任务项目：' + task.project + ' · 修正轮数：' + task.fix_rounds + '/' + task.max_fix_rounds;
+      chatEl.appendChild(div);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function renderPendingChanges(list) {
+      (list || []).forEach(function (ch) {
+        const card = document.createElement('div');
+        card.className = 'card';
+        const h = document.createElement('h4');
+        h.textContent = (ch.type === 'create' ? '待确认：新建文件' : '待确认：文本替换');
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = ch.project + '/' + ch.file_path + '（change_id: ' + ch.id + '）';
+        const pre = document.createElement('pre');
+        pre.textContent = ch.diff || '(无差异)';
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+        const ok = document.createElement('button');
+        ok.className = 'btn btn-ok'; ok.textContent = '确认并应用';
+        const no = document.createElement('button');
+        no.className = 'btn btn-danger'; no.textContent = '拒绝';
+        const result = document.createElement('div');
+        result.className = 'result';
+
+        ok.addEventListener('click', function () { applyChange(ch.id, ok, no, result); });
+        no.addEventListener('click', function () { rejectChange(ch.id, ok, no, result); });
+
+        actions.appendChild(ok); actions.appendChild(no);
+        card.appendChild(h); card.appendChild(meta); card.appendChild(pre);
+        card.appendChild(actions); card.appendChild(result);
+        chatEl.appendChild(card);
+        chatEl.scrollTop = chatEl.scrollHeight;
+      });
+    }
+
+    function renderPendingCheck(pc) {
+      if (!pc) return;
+      const card = document.createElement('div');
+      card.className = 'card';
+      const h = document.createElement('h4');
+      h.textContent = '待授权：运行 pytest';
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = '对项目 ' + pc.project + ' 执行 pytest 会运行项目代码，请确认你信任该项目。';
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      const ok = document.createElement('button');
+      ok.className = 'btn btn-ok'; ok.textContent = '授权运行 pytest';
+      const no = document.createElement('button');
+      no.className = 'btn btn-danger'; no.textContent = '拒绝';
+      const result = document.createElement('div');
+      result.className = 'result';
+      ok.addEventListener('click', function () { authorizeCheck(pc.project, ok, no, result); });
+      no.addEventListener('click', function () { denyCheck(ok, no, result); });
+      actions.appendChild(ok); actions.appendChild(no);
+      card.appendChild(h); card.appendChild(meta); card.appendChild(actions); card.appendChild(result);
+      chatEl.appendChild(card);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    async function postJSON(url, body) {
+      const resp = await fetch(url, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      return await resp.json();
+    }
+
+    function disablePair(ok, no) { ok.disabled = true; no.disabled = true; }
+
+    async function restoreChange(id, result) {
+      const r = await postJSON('/change/restore', { change_id: id });
+      result.textContent = r.ok ? '已恢复该修改。' : ('恢复失败：' + r.error);
+    }
+
+    async function applyChange(id, ok, no, result) {
+      disablePair(ok, no);
+      const r = await postJSON('/change/apply', { change_id: id });
+      if (!r.ok) {
+        result.textContent = '应用失败：' + r.error;
+        return;
+      }
+      result.textContent = '已应用。备份编号：' + (r.backup_id || '（新建文件无备份）');
+      if (r.backup_id) {
+        // 替换类修改提供「恢复」入口（新建文件暂不支持恢复）。
+        const rb = document.createElement('button');
+        rb.className = 'btn btn-ghost'; rb.textContent = '恢复此修改';
+        rb.addEventListener('click', function () { restoreChange(id, result); });
+        result.appendChild(document.createElement('span')).textContent = ' ';
+        result.appendChild(rb);
+      }
+      continueTask('（系统）已应用修改 ' + id + '，请继续：运行检查并根据结果决定是否进一步修改。');
+    }
+
+    async function rejectChange(id, ok, no, result) {
+      disablePair(ok, no);
+      const r = await postJSON('/change/reject', { change_id: id });
+      result.textContent = r.ok ? '已拒绝。' : ('操作失败：' + r.error);
+    }
+
+    async function authorizeCheck(project, ok, no, result) {
+      disablePair(ok, no);
+      const r = await postJSON('/check/authorize', { task_id: taskId, project: project, check_type: 'pytest' });
+      result.textContent = r.ok ? '已授权。' : ('操作失败：' + (r.error || r.detail));
+      if (r.ok) continueTask('（系统）已授权对项目 ' + project + ' 运行 pytest，请继续运行检查。');
+    }
+
+    async function denyCheck(ok, no, result) {
+      disablePair(ok, no);
+      const r = await postJSON('/check/deny', { task_id: taskId });
+      result.textContent = r.ok ? '已拒绝运行 pytest。' : '操作失败。';
+    }
+
+    async function fetchWithTimeout(url, opts, timeoutMs) {
+      const ctrl = new AbortController();
+      const t = setTimeout(function () { ctrl.abort(); }, timeoutMs);
+      try { return await fetch(url, Object.assign({}, opts, { signal: ctrl.signal })); }
+      finally { clearTimeout(t); }
+    }
+
+    // 一次模型请求（带超时 + 有限重试），成功后渲染所有返回内容。
+    async function doChat(message, historyBefore) {
+      sending = true; sendBtn.disabled = true;
+      try {
+        let lastErr = null;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            const resp = await fetchWithTimeout('/chat', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message: message, history: historyBefore, task_id: taskId })
+            }, 180000);
+            const data = await resp.json();
+            if (!resp.ok) { addBubble(data.error || '请求失败', 'error'); return; }
+            if (data.tool_calls && data.tool_calls.length) data.tool_calls.forEach(addTool);
+            const reply = data.reply || '(模型未返回内容)';
+            addBubble(reply, 'assistant');
+            history.push({ role: 'assistant', content: reply });
+            renderTask(data.task);
+            renderPendingChanges(data.pending_changes);
+            renderPendingCheck(data.pending_check);
+            return;
+          } catch (err) {
+            lastErr = err;
+            if (attempt === 0) await new Promise(function (r) { setTimeout(r, 500); });
+          }
+        }
+        addBubble('网络或服务错误：' + (lastErr ? lastErr.message : '未知'), 'error');
+      } finally {
+        // 关键：无论成功、失败还是异常，都恢复发送状态，否则页面无法继续操作。
+        sending = false;
+        sendBtn.disabled = false;
+        inputEl.focus();
+      }
+    }
+
+    function send() {
+      const text = inputEl.value.trim();
+      if (!text || sending) return;
+      addBubble(text, 'user');
+      history.push({ role: 'user', content: text });
+      inputEl.value = '';
+      doChat(text, history.slice(0, -1));
+    }
+
+    // 用户确认/授权后，用系统消息继续任务（不是无限轮询）。
+    function continueTask(msg) {
+      if (sending) return;
+      addBubble(msg, 'system');
+      history.push({ role: 'user', content: msg });
+      doChat(msg, history.slice(0, -1));
+    }
+
+    async function resetTask() {
+      try {
+        const r = await postJSON('/task/reset', {});
+        taskId = r.task_id || 'default';
+      } catch (e) { /* 忽略，保留旧 taskId */ }
+      history = [];
+      chatEl.innerHTML = '';
+      addBubble('已开始新任务。', 'system');
+    }
+
+    sendBtn.addEventListener('click', send);
+    resetBtn.addEventListener('click', resetTask);
+    inputEl.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey && !composing) { e.preventDefault(); send(); }
+    });
+    inputEl.addEventListener('compositionstart', function () { composing = true; });
+    inputEl.addEventListener('compositionend', function () { composing = false; });
+
+    // 页面加载时获取一个全新 task_id，避免多标签页共享「default」。
+    (async function init() {
+      try {
+        const r = await postJSON('/task/reset', {});
+        taskId = r.task_id || 'default';
+      } catch (e) { /* 保持 default */ }
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+# 密钥与本地配置
+.env
+
+# 助手备份目录（修改应用前的文件备份）
+.agent_backups/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
